@@ -1,0 +1,346 @@
+\documentclass[11pt]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{geometry}
+\geometry{margin=1in}
+\usepackage{microtype}
+\usepackage{amsmath,amssymb,amsthm,mathtools}
+\usepackage{bbm}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{cleveref}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!50!black,
+  citecolor=blue!50!black,
+  urlcolor=blue!50!black
+}
+
+% Theorem setup
+\theoremstyle{plain}
+\newtheorem{theorem}{Theorem}
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{corollary}[theorem]{Corollary}
+
+\theoremstyle{definition}
+\newtheorem{definition}{Definition}
+\newtheorem{assumption}{Assumption}
+
+\theoremstyle{remark}
+\newtheorem{remark}{Remark}
+\newtheorem{example}{Example}
+
+% Commands
+\newcommand{\Prb}{\mathbb{P}}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\Ind}{\mathbbm{1}}
+\newcommand{\TV}{\mathrm{TV}}
+\newcommand{\supp}{\mathrm{Supp}}
+\newcommand{\A}{\mathcal{A}}
+\newcommand{\F}{\mathcal{F}}
+\newcommand{\Y}{\mathcal{Y}}
+\newcommand{\B}{\mathcal{B}}
+\newcommand{\K}{\mathcal{K}}
+\newcommand{\Pcal}{\mathcal{P}}
+\newcommand{\mix}{\mathrm{mix}}
+
+\title{\vspace{-0.5em}Measure-Theoretic Compile-Time Safety Contracts for Decision Kernels\\
+and an Ergodic ``Murphy Clock''}
+\author{Jacob Elliott}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We package safety constraints for stochastic decision systems as \emph{measurable support contracts} over Markov kernels. On a standard Borel state space $(\Omega,\F)$ with action space $(\A,\B)$, a \emph{$\sigma$-Safety contract} declares a safe set $S\in\F$ and an allowed-action interface $A_{\mathrm{safe}}:\Omega\to 2^{\A}$, and requires zero hazard mass: $K(\omega,a;S^c)=0$ for all $\omega\in S$ and $a\in A_{\mathrm{safe}}(\omega)$. We prove closure under measurable mixtures and scheduled composition (via a phase-augmented state), give finite-state graph specializations (forward-closed sets under allowed edges), and provide soft-contract envelopes when zero mass is replaced by adaptive per-step bounds. Separately, for stochastic search over admissible behaviors we derive block-geometric hitting-time tails: under Doeblin minorization $P^{t_*}\ge \beta\,\mu$, the time to a rare event $H$ of stationary mass $h$ obeys $\Prb(\tau_H>k\,t_*)\le (1-\beta h)^k$ and $\E[\tau_H]\le t_*/(\beta h)$. A TV-mixing variant holds without minorization. We demonstrate contracts on a BA--FRC social model and on a neutral expander-walk baseline, and sketch static analyzers that certify measurability and support zeros at build time. The result is a compile-time gate for pipelines of decision kernels, and an operational clock for ``if it can happen, it will'' with explicit constants.
+\end{abstract}
+
+\section{Introduction}
+
+Safety in stochastic decision systems is often enforced at run time via heuristics and thresholds. We propose a compile-time alternative: \emph{measurable support contracts} over Markov kernels. If the state space is measurable, kernels are measurable in state and action, and the safety set $S$ is an event in the state $\sigma$-algebra, then ruling out transitions $S\to S^c$ at the kernel level prevents classes of failures by construction. This design-level invariant survives measurable mixtures and scheduled compositions, so entire pipelines obey the same guarantee.
+
+Complementing design-time invariants, we price the discovery of rare-but-allowed behaviors via an \emph{ergodic Murphy clock}. For a target $H$ with stationary mass $h$, block minorization yields geometric tails on the hitting time $\tau_H$ with explicit constants in terms of the block length and minorization coefficient; a more general TV-mixing version trades constants for broader applicability. Operationally: if $h>0$, then---up to mixing constants---the time scale is $\Theta(1/h)$; parallel independent threads reduce wall-time approximately linearly.
+
+\paragraph{Contributions.}
+(i) A contract language and proofs of closure for measurable mixtures and scheduled composition (via state augmentation). (ii) Three safety tiers: robust-, interface-, and policy-realized $\sigma$-safety. (iii) Finite-state specializations and linear-time graph checks. (iv) Soft-contract envelopes with adaptive per-step bounds. (v) Block-geometric hitting-time bounds (minorization) and a TV-mixing alternative, with parallelism caveats. (vi) Case studies: BA--FRC moderation constraints and a neutral expander baseline. (vii) Static-analyzer type rules for measurability and support zeros.
+
+\section{Preliminaries}
+
+\paragraph{Spaces.}
+Let $(\Omega,\F)$ be a standard Borel space (a Borel subset of a Polish space). Let $(\A,\B)$ be a standard Borel action space, and $(\Y,\mathcal{Y})$ an observation space.
+
+\paragraph{Kernels and policies.}
+A (Markov) kernel is a measurable map $K:\Omega\times \A \to \Pcal(\Omega)$: for each $A\in\F$, $(\omega,a)\mapsto K(\omega,a;A)$ is $\F\otimes\B$-measurable. A (Markov) policy is a measurable map $\pi:\Omega\to \Pcal(\A)$. The one-step controlled kernel under policy $\pi$ is
+\[
+P_\pi(\omega,\cdot) \;=\; \int_{\A} K(\omega,a;\cdot)\,\pi(\omega,da).
+\]
+We write $X_t$ for the induced Markov chain and $\mu_\pi$ for any stationary distribution (when it exists).
+
+\paragraph{Observables.}
+A measurable observable is $O:\Omega\to \Y$. For $B\in\mathcal{Y}$, the pullback $O^{-1}(B)\in\F$ is a state event.
+
+\paragraph{Schedules and phase-augmented state.}
+Pipelines that cycle through $m$ operators are Markovian on the extended state $\tilde\Omega=\Omega\times\{1,\dots,m\}$ with a deterministic phase update. All results below apply on $\tilde\Omega$ with obvious changes of notation.
+
+\section{\texorpdfstring{$\sigma$}{sigma}-Safety Contracts}
+
+We formalize safety relative to an \emph{allowed-action interface}. This binds guarantees to what the system can ever execute, not to a single fixed policy.
+
+\begin{definition}[Allowed-action interface]
+A measurable allowed-action map is a set-valued map $A_{\mathrm{safe}}:\Omega\to 2^{\A}$ whose graph $\{(\omega,a): a\in A_{\mathrm{safe}}(\omega)\}$ is a measurable subset of $\Omega\times \A$.
+The associated policy class is
+\[
+\Pi_{\mathrm{safe}} \;=\; \Bigl\{\pi\ \text{measurable}:\ \supp\bigl(\pi(\cdot\mid \omega)\bigr)\subseteq A_{\mathrm{safe}}(\omega)\ \ \forall \omega\Bigr\}.
+\]
+\end{definition}
+
+\begin{definition}[Safety tiers]
+Let $S\in\F$ be a safe set; $S^c$ is the hazard set. For a kernel family $\K$:
+\begin{itemize}[leftmargin=1.3em]
+\item \textbf{Robust-$\sigma$} (R-$\sigma$): $\forall K\in\K,\ \forall \omega\in S,\ \forall a\in \A:\ K(\omega,a;S^c)=0$.
+\item \textbf{Interface-$\sigma$} (I-$\sigma$): $\forall K\in\K,\ \forall \omega\in S,\ \forall a\in A_{\mathrm{safe}}(\omega):\ K(\omega,a;S^c)=0$.
+\item \textbf{Policy-$\sigma$} (P-$\sigma$) for a specific $\pi$: $\forall K\in\K,\ \forall \omega\in S,\ \forall a\in \supp(\pi(\cdot\mid\omega)):\ K(\omega,a;S^c)=0$.
+\end{itemize}
+We have $\text{R-}\sigma \Rightarrow \text{I-}\sigma \Rightarrow \text{P-}\sigma$.
+\end{definition}
+
+\begin{proposition}[Hoare-style invariance]
+\label{prop:hoare}
+$I$-$\sigma$ for $(S,\K,A_{\mathrm{safe}})$ is equivalent to forward invariance: for all $K\in\K$, for all $\omega\in S$ and $a\in A_{\mathrm{safe}}(\omega)$, $K(\omega,a;\cdot)$ is supported on $S$. Equivalently: $\{S\}\,K\,\{S\}$.
+\end{proposition}
+
+\begin{theorem}[Closure under measurable mixtures and scheduled composition]
+\label{thm:closure}
+Assume $(S,\K,A_{\mathrm{safe}})$ is I-$\sigma$ and let $\tilde\Omega$ be the phase-augmented state.
+\begin{enumerate}[label=(\alph*), leftmargin=1.6em]
+\item (Mixtures) If $\{K_i\}_{i\in I}\subset \K$ are I-$\sigma$ and $\lambda_i:\tilde\Omega\to[0,1]$ are measurable with $\sum_i \lambda_i(\tilde\omega)=1$, then $K:=\sum_i \lambda_i K_i$ is I-$\sigma$.
+\item (Composition) If $K_1,K_2\in \K$ are I-$\sigma$, then for any $\pi\in\Pi_{\mathrm{safe}}$ the composed one-step kernel
+\[
+(K_2\circ K_1)_\pi(\omega,\cdot)\;=\;\int_{\A} \int_{\Omega} K_1(\omega,a;d\omega')\, \pi(\omega',da')\, K_2(\omega',a';\cdot)
+\]
+is I-$\sigma$.
+\end{enumerate}
+\end{theorem}
+
+\begin{proof}[Proof sketch]
+(a) Linearity preserves zero hazard mass on $S^c$. (b) $K_1$ does not leave $S$ from $S$, and $K_2$ preserves $S$ for all allowed actions at $\omega'$. Tonelli's theorem ensures measurability of the integral, so the result is a kernel supported on $S$. \qedhere
+\end{proof}
+
+\begin{proposition}[Pullback via observables]
+\label{prop:pullback}
+If $O:\Omega\to \Y$ is measurable and $S_y\in\mathcal{Y}$ is a safe observation set, then $S:=O^{-1}(S_y)\in\F$. If I-$\sigma$ holds for $S$ (with $O$ folded into $K$ if $O$ is stochastic), then $O$-defined constraints are enforced at the state level.
+\end{proposition}
+
+\subsection{Continuous-time (point-process) variant}
+
+Let events arrive via an $\F\otimes\B\otimes \B(\mathbb{R}_+)$-measurable conditional intensity $\lambda(\omega,a;t)$ with a mark kernel $M(\omega,a;\cdot)$. For a measurable hazard mark set $H_m$, define the hazard intensity $\lambda_H(\omega,a;t)=\lambda(\omega,a;t)\,M(\omega,a;H_m)$.
+
+\begin{definition}[Point-process $\sigma$-Safety]
+I-$\sigma$ holds if $\lambda_H(\omega,a;t)\equiv 0$ for all $\omega\in S$ and $a\in A_{\mathrm{safe}}(\omega)$ and all $t\ge 0$. Measurable thinning, superposition, and random time change preserve I-$\sigma$ under composition.
+\end{definition}
+
+\section{Finite-state specialization and graph checks}
+
+Suppose $\Omega$ is finite or countable, $\F=2^\Omega$. Define an allowed-edge digraph with vertices $\Omega$ and an edge $i\to j$ iff $\sup_{a\in A_{\mathrm{safe}}(i)} K(i,a;\{j\})>0$.
+
+\begin{theorem}[Graph characterization and linear-time check]
+\label{thm:graph}
+On finite/countable $\Omega$, I-$\sigma$ holds iff $S$ is forward-closed in the allowed-edge digraph (no path from any $i\in S$ to any $j\in S^c$ using allowed edges). This can be checked by a single BFS/DFS from $S$ in $O(|\Omega|+|E|)$ time.
+\end{theorem}
+
+\section{Soft contracts and horizon failure envelopes}
+
+Hard zeros are sometimes unattainable. We allow adaptive soft bounds on hazard probability and obtain a sharp, independence-free envelope.
+
+\begin{assumption}[Adaptive soft bound]
+\label{ass:soft}
+For the natural filtration $\mathcal{F}_t=\sigma(X_0,A_0,\dots,X_t)$ and all $t\ge 0$,
+\[
+\Prb\bigl(X_{t+1}\in S^c \mid \mathcal{F}_t\bigr)\ \le\ \varepsilon_t,
+\]
+for some $[0,1]$-valued predictable sequence $(\varepsilon_t)$.
+\end{assumption}
+
+\begin{theorem}[Soft-contract horizon bound]
+\label{thm:soft}
+Under \Cref{ass:soft}, for any horizon $T$,
+\[
+\Prb\Bigl(\exists\,t\le T:\ X_t\in S^c\Bigr)\ \le\ 1-\prod_{t=0}^{T-1} (1-\varepsilon_t)\ \le\ \sum_{t=0}^{T-1}\varepsilon_t.
+\]
+In particular, if $\varepsilon_t\equiv \varepsilon$, then the failure envelope is $1-(1-\varepsilon)^T$.
+\end{theorem}
+
+\begin{proof}[Proof sketch]
+Iterate the tower property and apply the union bound to hazard indicators. No independence is required. \qedhere
+\end{proof}
+
+\section{Ergodic Murphy scaling for rare-event search}
+
+We bound the time to hit a measurable target $H\in \F$ with stationary mass $h=\mu_\pi(H)>0$.
+
+\subsection{Version A: minorization (block-geometric tails)}
+
+\begin{assumption}[Doeblin minorization]
+\label{ass:minorization}
+There exist $t_*\in\mathbb{N}$ and $\beta\in(0,1]$ such that
+\[
+P_\pi^{t_*}(\omega,\cdot)\ \ge\ \beta\,\mu_\pi(\cdot) \quad \text{for all } \omega\in\Omega.
+\]
+\end{assumption}
+
+\begin{theorem}[Blocked geometric tail and expectation]
+\label{thm:murphyA}
+Under \Cref{ass:minorization}, for any measurable $H$ with $\mu_\pi(H)=h$ and for all $k\in\mathbb{N}$,
+\[
+\Prb(\tau_H>k\,t_*)\ \le\ (1-\beta h)^k\ \le\ e^{-\beta h\,k}
+\quad\text{and}\quad
+\E[\tau_H]\ \le\ \frac{t_*}{\beta h}.
+\]
+\end{theorem}
+
+\begin{proof}[Proof sketch]
+Each $t_*$-block has success probability at least $\beta h$ uniformly over starting states; iterated conditioning yields the geometric tail. The expectation bound follows from summing the tail or Wald-type arguments. \qedhere
+\end{proof}
+
+\begin{remark}[Parallelism and dependence]
+With $M$ independent copies, $\Prb(\min_m \tau_H^{(m)} > k\,t_*)\le (1-\beta h)^{kM}$, giving a first-order $1/M$ wall-time reduction. Without independence, use the union bound to remain conservative.
+\end{remark}
+
+\subsection{Version B: TV-mixing at the $h/2$ scale}
+
+Let $t_{\mix}(\varepsilon)=\min\{t:\sup_\omega \|P_\pi^t(\omega,\cdot)-\mu_\pi\|_{\TV}\le \varepsilon\}$.
+
+\begin{theorem}[TV-mixing Murphy clock]
+\label{thm:murphyB}
+For any $H$ with $\mu_\pi(H)=h$ and $k\in\mathbb{N}$,
+\[
+\Prb\bigl(\tau_H>k\,t_{\mix}(h/2)\bigr)\ \le\ (1-h/2)^k\ \le\ e^{-(h/2)\,k},
+\quad
+\E[\tau_H]\ \le\ \frac{2\,t_{\mix}(h/2)}{h}.
+\]
+For reversible chains, $t_{\mix}(h/2)\lesssim t_{\mathrm{rel}}\log(1/h)$, where $t_{\mathrm{rel}}=1/\mathrm{gap}$.
+\end{theorem}
+
+\begin{proof}[Proof sketch]
+At time $t_{\mix}(h/2)$, $P_\pi^{t}(\omega,H)\ge \mu_\pi(H)-h/2=h/2$ uniformly in $\omega$. Proceed as in \Cref{thm:murphyA}. The reversible estimate is standard. \qedhere
+\end{proof}
+
+\begin{remark}[Kac's lemma sanity check]
+Starting from $\mu_\pi$, the expected return time to $H$ is exactly $1/h$; the clocks above realize the same $1/h$ scaling up to mixing constants, even for non-stationary starts.
+\end{remark}
+
+\section{Case studies: BA--FRC and a neutral baseline}
+
+\subsection{BA--FRC contracts (interface-$\sigma$)}
+
+State minimality: $\omega=(L,S,\pi,V,B)\in \mathbb{N}^2\times [0,1]\times \mathbb{R}_+^{2n}$ with Borel $\sigma$-algebra. Actions $a\in\{\mathrm{Speak}_\ell,\mathrm{Attack}_j,\mathrm{Defend}_j,\mathrm{Signal},\mathrm{Silent}\}^n$.
+
+\paragraph{Observable constraints via pullback.}
+Let $O:\Omega\to \Y$ be a measurable (possibly stochastic) classifier mapping to a content taxonomy; if stochastic, fold its noise into $K$. With a forbidden set $\mathrm{Forbidden}\subset \Y$, define $S=O^{-1}(\Y\setminus \mathrm{Forbidden})$. Enforce I-$\sigma$ by clamping generators so $K(\omega,a;S^c)=0$ for all $a\in A_{\mathrm{safe}}(\omega)$.
+
+\paragraph{Anti-dogpile cap.}
+Let $S=\{\max_j B_j \le B_{\max}\}$. Implement a measurable clamp $B'=\min\{B\cdot \alpha(\omega,a), B_{\max}\}$; then $K(\omega,a;S^c)=0$ holds algebraically for all allowed $a$.
+
+\paragraph{Pipeline closure.}
+Let the scheduled pipeline be $\Gamma \to \mathrm{Pivot}\to \mathrm{Sheriff}$. Work on $\tilde\Omega$ with a phase coordinate; if each phase kernel is I-$\sigma$ on $S$, then by \Cref{thm:closure} the scheduled operator is I-$\sigma$.
+
+\subsection{Neutral baseline: lazy expander walk}
+
+On a fixed $d$-regular expander graph with lazy random walk, $t_{\mix}(\tfrac14)=\Theta(\log n)$ and a Doeblin minorization holds with constants depending only on $d$; for any target $H$ of size $|H|/n=h$, \Cref{thm:murphyA,thm:murphyB} predict $\tau_H$ scaling like $\Theta(\log n / h)$ with tight geometric tails.
+
+\section{Static analyzers and implementation notes}
+
+\paragraph{Measurability DSL (type rules).}
+Treat ``Borel-kernel'' as a type. The following constructors preserve the type:
+\begin{enumerate}[leftmargin=1.3em,label=(\roman*)]
+\item Borel maps (affine updates, clamps, min/max, piecewise on Borel partitions).
+\item Pushforward under Borel maps and integration against Borel kernels.
+\item Measurable mixtures with Borel weights; pointwise limits of kernels.
+\end{enumerate}
+A structural induction proves that kernels built from certified primitives are measurable.
+
+\paragraph{Support-zero checker.}
+For deterministic clamps, discharge $K(\omega,a;S^c)=0$ symbolically. With continuous noise, store analytic upper bounds on $K(\omega,a;S^c)$ (e.g., Lipschitz margins) and route to a soft-contract with $\varepsilon_t$.
+
+\paragraph{Schedule checker.}
+Lift to $\tilde\Omega$ and verify I-$\sigma$ per phase; composition then follows from \Cref{thm:closure}.
+
+\paragraph{Graph checker.}
+Build the allowed-edge digraph using $A_{\mathrm{safe}}$ and run a BFS/DFS from $S$; failure is any discovery in $S^c$.
+
+\paragraph{Mixing diagnostics.}
+Estimate $t_{\mix}(\epsilon)$ via standard TV surrogates (autocorrelation, spectral proxies) and, when available, a minorization pair $(t_*,\beta)$ via regeneration sampling.
+
+\section{Experiments}
+
+\noindent\textbf{E1 (Hard-contract sanity).} Construct $200$--$1000$-state BA--FRC rooms; auto-verify I-$\sigma$ and simulate $10^5$ steps. Empirical violations should be $0$.
+
+\noindent\textbf{E2 (Soft caps).} Replace zeros with $\varepsilon$-clamps; measure $T$-horizon failure vs.\ $\varepsilon$; overlay $1-(1-\varepsilon)^T$ and the adaptive product bound.
+
+\noindent\textbf{E3 (Ergodic hitting).} Define a rare event $H$ (e.g., spontaneous magnanimity at low $\rho$); estimate $h$ and either $(t_*,\beta)$ or $t_{\mix}(h/2)$; compare empirical $\tau_H$ to the predicted clocks across parameter sweeps.
+
+\noindent\textbf{E4 (Graph cuts).} On discretized models, compute allowed reachability and compare to Monte Carlo violations under noisy policies.
+
+\section{Discussion and limitations}
+
+Compile-time contracts are interface-level (I-$\sigma$). If deployments bypass $A_{\mathrm{safe}}$ or if classifiers leak hazard via mislabeling not folded into $K$, guarantees degrade to soft-contract regimes. Our Murphy clocks expose constants $(t_*,\beta)$ or $t_{\mix}$; poor mixing inflates budgets. Finally, $\sigma$-Safety enforces invariance, not fairness or optimality.
+
+\section{Conclusion}
+
+Measurability plus support zeros yields semigroup-stable, compile-time safety for pipelines of decision kernels. For rare-but-allowed behaviors, block-geometric tails parameterized by mixing constants provide an operational clock. The combination lets designers \emph{prove} invariants up front and \emph{price} discovery risk quantitatively.
+
+\paragraph{Acknowledgments}
+\emph{(Omitted in draft.)}
+
+\begin{thebibliography}{9}
+
+\bibitem{Puterman}
+M.~L. Puterman, \emph{Markov Decision Processes}. Wiley, 2014.
+
+\bibitem{LPW}
+D.~A. Levin, Y.~Peres, and E.~L. Wilmer, \emph{Markov Chains and Mixing Times}. AMS, 2009.
+
+\bibitem{MeynTweedie}
+S.~P. Meyn and R.~L. Tweedie, \emph{Markov Chains and Stochastic Stability}. Springer, 2009.
+
+\bibitem{Paulin}
+D.~Paulin, ``Mixing and concentration by Ricci curvature,'' \emph{ESAIM: PS}, 2015. (For nonreversible and pseudo-spectral gap techniques.)
+
+\bibitem{BaierKatoen}
+C.~Baier and J.-P. Katoen, \emph{Principles of Model Checking}. MIT Press, 2008.
+
+\bibitem{Alshiekh}
+M.~Alshiekh et al., ``Safe reinforcement learning via shielding,'' \emph{AAAI}, 2018.
+
+\bibitem{Aubin}
+J.-P. Aubin, \emph{Viability Theory}. Birkhäuser, 2009.
+
+\bibitem{Kac}
+M.~Kac, ``On the notion of recurrence in discrete stochastic processes,'' \emph{Bull. AMS}, 1947.
+
+\end{thebibliography}
+
+\appendix
+
+\section{Proof details}
+
+\subsection*{Composition measurability}
+If $K_i$ are kernels and $A\in \F$, the map $(\omega,a)\mapsto \int_\A \int_\Omega K_1(\omega,a;d\omega')\,\pi(\omega',da')\,K_2(\omega',a';A)$ is measurable by Fubini--Tonelli and kernel measurability, so $K_2\circ K_1$ is a kernel.
+
+\subsection*{Expectation in \texorpdfstring{\Cref{thm:murphyA}}{}}
+From $\Prb(\tau_H>k\,t_*)\le (1-\beta h)^k$, $\E[\tau_H]\le \sum_{k\ge 0} \Prb(\tau_H>k\,t_*)\cdot t_* \le t_*/(\beta h)$.
+
+\section{Finite-state BFS pseudocode}
+
+Given $S\subset \Omega$ and allowed edges $E=\{(i,j): \sup_{a\in A_{\mathrm{safe}}(i)} K(i,a;\{j\})>0\}$:
+\begin{quote}
+Initialize queue with all $i\in S$; mark visited $\gets S$. \\
+While queue nonempty: pop $u$; for each $(u,v)\in E$: if $v\notin \mathrm{visited}$ then add $v$; if $v\in S^c$ then \textbf{fail}. \\
+If loop completes without failure, \textbf{pass}.
+\end{quote}
+
+\end{document}
